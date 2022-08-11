@@ -83,6 +83,7 @@ export default function Canvas() {
       } else {
         setTextField(null);
         selectedTextEl.current = undefined;
+        acceptKeystrokes.current = true;
       }
     }
 
@@ -212,7 +213,10 @@ export default function Canvas() {
 
         if (selectedEl._objects) {
           selectedEl._objects.forEach((el: any) => fabricRef.current?.remove(el));
-        } else fabricRef.current?.remove(selectedEl);
+        } else {
+          fabricRef.current?.remove(selectedEl);
+          if (selectedEl.text) setTextField(null);
+        }
       }
 
       // shift-u for undo
@@ -246,10 +250,6 @@ export default function Canvas() {
   }, [mode]);
 
   useEffect(() => {
-    acceptKeystrokes.current = textField === null;
-  }, [textField]);
-
-  useEffect(() => {
     if (selectedTextEl.current && textField) selectedTextEl.current.text = textField;
     fabricRef.current?.renderAll();
   }, [textField]);
@@ -266,6 +266,7 @@ export default function Canvas() {
             }}
             className="text-xl px-5 py-2 w-96 border shadow-xl rounded focus:outline-none"
             value={textField}
+            onFocusCapture={() => (acceptKeystrokes.current = false)}
           />
         </div>
       )}
