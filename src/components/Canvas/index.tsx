@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { fabric } from "fabric";
 import { ImPencil2 } from "react-icons/im";
-import { BsSlashLg } from "react-icons/bs";
 import { BiText } from "react-icons/bi";
-import { IoTriangle, IoSquare, IoEllipse, IoShapesOutline } from "react-icons/io5";
 import { FaMousePointer } from "react-icons/fa";
-import { FiChevronUp } from "react-icons/fi";
-import { Mode, IElement } from "../../types";
-import { createCanvasElement } from "./utils";
+import { IoEye } from "react-icons/io5";
+import { IoTriangle, IoSquare, IoEllipse, IoShapesOutline } from "react-icons/io5";
+import { Mode } from "../../types";
+import { io } from "socket.io-client";
+import { v4 as uuidv4 } from "uuid";
+import events from "../../events";
 
-// PAN & ZOOM
+const socket = io(import.meta.env.VITE_SOCKET_SERVER);
+socket.connect();
 
 export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -21,9 +23,15 @@ export default function Canvas() {
   const acceptKeystrokes = useRef(true);
   const selectedTextEl = useRef<fabric.Text>();
 
+  const isDraggingRef = useRef(false);
+
   const [textField, setTextField] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("selection");
   const [showShapes, setShowShapes] = useState(false);
+  const [people, setPeople] = useState(1);
+
+  const lastPosXRef = useRef<number>();
+  const lastPosYRef = useRef<number>();
 
   modeRef.current = mode;
 
@@ -74,9 +82,26 @@ export default function Canvas() {
   const mouseDown = (e: fabric.IEvent<MouseEvent>) => {
     if (!fabricRef.current) return;
 
+    isDraggingRef.current = true;
+
+    if (e.e.altKey) {
+      initialMouseCoordsRef.current = e.absolutePointer;
+      fabricRef.current.selection = false;
+
+      lastPosXRef.current = e.e.clientX;
+      lastPosYRef.current = e.e.clientY;
+
+      return;
+    } else {
+      fabricRef.current.selection = true;
+    }
+
     if (modeRef.current !== "pencil" && modeRef.current !== "selection") {
       removeElementControls();
+      fabricRef.current.selection = false;
     } else {
+      fabricRef.current.selection = true;
+
       if (e.target && "text" in e.target) {
         setTextField((e.target as any).text);
         selectedTextEl.current = e.target;
@@ -121,7 +146,21 @@ export default function Canvas() {
   };
 
   const mouseMove = (e: fabric.IEvent<MouseEvent>) => {
-    if (!currentElRef.current || !initialMouseCoordsRef.current || !e.absolutePointer) return;
+    if (!initialMouseCoordsRef.current || !e.absolutePointer) return;
+
+    if (e.e.altKey && initialMouseCoordsRef.current) {
+      const vpt = fabricRef.current?.viewportTransform as number[];
+
+      // vpt[4] += e.absolutePointer.x - initialMouseCoordsRef.current.x;
+      // vpt[5] += e.absolutePointer.y - initialMouseCoordsRef.current.y;
+      vpt[4] += e.e.clientX - (lastPosXRef.current as number);
+      vpt[5] += e.e.clientY - (lastPosYRef.current as number);
+
+      lastPosXRef.current = e.e.clientX;
+      lastPosYRef.current = e.e.clientY;
+
+      fabricRef.current?.requestRenderAll();
+    }
 
     if (
       initialMouseCoordsRef.current.x > e.absolutePointer.x ||
@@ -130,7 +169,7 @@ export default function Canvas() {
       return;
     }
 
-    if (modeRef.current === "circle") {
+    if (currentElRef.current && modeRef.current === "circle") {
       fabricRef.current?.remove(currentElRef.current);
 
       currentElRef.current = new fabric.Circle({
@@ -142,7 +181,7 @@ export default function Canvas() {
       fabricRef.current?.add(currentElRef.current);
     }
 
-    if (modeRef.current === "square") {
+    if (currentElRef.current && modeRef.current === "square") {
       fabricRef.current?.remove(currentElRef.current);
 
       currentElRef.current = new fabric.Rect({
@@ -156,7 +195,7 @@ export default function Canvas() {
       fabricRef.current?.add(currentElRef.current);
     }
 
-    if (modeRef.current === "triangle") {
+    if (currentElRef.current && modeRef.current === "triangle") {
       fabricRef.current?.remove(currentElRef.current);
 
       currentElRef.current = new fabric.Rect({
@@ -171,9 +210,20 @@ export default function Canvas() {
   };
 
   const mouseUp = () => {
+    isDraggingRef.current = false;
+    (fabricRef.current as fabric.Canvas).selection = false;
+
     console.log("MOUSE UP");
     if (modeRef.current !== "pencil" && modeRef.current !== "selection") {
       addElementControls();
+    }
+
+    fabricRef.current?.forEachObject((obj) => {
+      obj.setCoords();
+    });
+
+    if (currentElRef.current) {
+      objectAdded(currentElRef.current);
     }
 
     initialMouseCoordsRef.current = undefined;
@@ -188,10 +238,22 @@ export default function Canvas() {
     let zoom = canvas.getZoom();
     zoom *= 0.999 ** delta;
     if (zoom > 20) zoom = 20;
-    if (zoom < 0.2) zoom = 0.2;
+    if (zoom < 0.01) zoom = 0.01;
     canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
     opt.e.preventDefault();
     opt.e.stopPropagation();
+  };
+
+  const objectAdded = (e: fabric.Object) => {
+    console.log(e);
+  };
+
+  const objectModified = (e: fabric.IEvent<Event>) => {
+    console.log(e.target);
+  };
+
+  const objectRemoved = (e: fabric.IEvent<Event>) => {
+    console.log(e.target);
   };
 
   useEffect(() => {
@@ -203,6 +265,20 @@ export default function Canvas() {
       fabricCanvas.on("mouse:move", mouseMove);
       fabricCanvas.on("mouse:up", mouseUp);
       fabricCanvas.on("mouse:wheel", mouseWheeee);
+
+      fabricCanvas.on("object:added", (e) => {
+        if (e.target?.type === "path") {
+          objectAdded(e.target);
+        }
+      });
+
+      fabricCanvas.on("object:modified", (e) =>
+        setTimeout(() => !isDraggingRef.current && objectModified(e), 5)
+      );
+
+      fabricCanvas.on("object:removed", (e) =>
+        setTimeout(() => !isDraggingRef.current && objectRemoved(e), 5)
+      );
     }
 
     window.onkeydown = (keyE) => {
@@ -233,6 +309,18 @@ export default function Canvas() {
         setMode("pencil");
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const roomId = window.location.pathname.slice(1) || uuidv4();
+
+    if (!window.location.pathname.slice(1)) {
+      window.history.pushState("", "", "/" + roomId);
+    }
+
+    socket.emit(events.JOIN_ROOM.toString(), { roomId });
+
+    socket.on(events.UPDATE_PEOPLE_COUNT.toString(), (count) => setPeople(count));
   }, []);
 
   useEffect(() => {
@@ -270,6 +358,11 @@ export default function Canvas() {
           />
         </div>
       )}
+
+      <div className="flex items-center rounded p-1.5 bg-gray-100 fixed top-5 right-5">
+        <IoEye className="mr-1 text-lg text-gray-600" />
+        <p className="text-sm text-gray-600">{people}</p>
+      </div>
 
       <div className="flex items-center justify-between fixed bottom-10 px-7 py-2 border text-4xl shadow-xl rounded-2xl bg-white">
         <div
