@@ -1,7 +1,14 @@
-enum events {
+export enum SocketActions {
   JOIN_ROOM,
   LEAVE_ROOM,
   UPDATE_PEOPLE_COUNT,
+  LOAD_CANVAS,
+  CANVAS_ACTION,
 }
 
-export default events;
+export enum CanvasActions {
+  OBJECT_ADDED,
+  OBJECTS_REMOVED,
+  OBJECT_MODIFIED,
+  UNDO_ACTION,
+}

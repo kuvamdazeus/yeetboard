@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "crypto-js": "^4.1.1",
     "fabric": "^5.2.1",
     "peerjs": "^1.4.7",
     "react": "^18.2.0",
@@ -19,6 +20,7 @@
     "uuid": "^8.3.2"
   },
   "devDependencies": {
+    "@types/crypto-js": "^4.1.1",
     "@types/fabric": "^4.5.11",
     "@types/react": "^18.0.15",
     "@types/react-dom": "^18.0.6",

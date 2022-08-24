@@ -1,44 +1,11 @@
 import { Mode, IElement } from "../../types";
 import { fabric } from "fabric";
+import { SHA256 } from "crypto-js";
 
-export const createCanvasElement = (
-  mode: Mode,
-  startMousePosition: fabric.Point,
-  stopMousePosition: fabric.Point
-) => {
-  if (mode === "pencil" || mode === "selection") return null;
+export function areSameElements(canvasElem: fabric.Object, remoteElem: fabric.Object) {
+  return JSON.stringify(canvasElem) === JSON.stringify(remoteElem);
+}
 
-  let element: IElement;
-
-  const positionCoords = [
-    startMousePosition.x,
-    startMousePosition.y,
-    stopMousePosition.x,
-    stopMousePosition.y,
-  ];
-
-  const positionPoints: [fabric.Point, fabric.Point] = [startMousePosition, stopMousePosition];
-
-  // if (mode === "line") {
-  //   element = {
-  //     position: positionPoints,
-  //     type: mode,
-  //     drawable: new fabric.Line(positionCoords, { stroke: "red" }),
-  //   };
-  // } else if (mode === "rectangle") {
-  //   element = {
-  //     position: positionPoints,
-  //     type: mode,
-  //     drawable: new fabric.Line(positionCoords),
-  //   };
-  // } else {
-  //   // circle
-  //   element = {
-  //     position: positionPoints,
-  //     type: mode,
-  //     drawable: new fabric.Line(positionCoords),
-  //   };
-  // }
-
-  return null;
-};
+export function generateHash(jsonObj: any) {
+  return SHA256(JSON.stringify(jsonObj)).toString();
+}
