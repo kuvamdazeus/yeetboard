@@ -12,12 +12,9 @@ import { CanvasActions, SocketActions } from "../../events";
 import { generateHash } from "./utils";
 
 // TODO:
-// TEXT!!!
-// UNDO actions
-// LOADING useEffect(() => {}, [])
-// DONT COPY WHOLE THING for move actions actions, stick to minimum JSON
-// Remove unnecessary actions which lead to same state after some actions
-// OPTIMIZE DATA stored in redis
+// UPDATES
+// DRAW SHAPES no restrictions
+// MECHANISM to compare length of actions on all users & resolve it
 
 const socket = io(import.meta.env.VITE_SOCKET_SERVER);
 socket.connect();
@@ -32,7 +29,8 @@ export default function Canvas() {
   const acceptKeystrokes = useRef(true);
   const selectedTextEl = useRef<fabric.Text>();
   const actionsRef = useRef<CanvasActionData[]>([]);
-  const ctrlKeyRef = useRef(false);
+  const textTypeTimeoutRef = useRef<number | undefined>();
+  const selectedObjectsRef = useRef<fabric.Object[]>([]);
 
   const isDraggingRef = useRef(false);
 
@@ -41,6 +39,7 @@ export default function Canvas() {
   const [showShapes, setShowShapes] = useState(false);
   const [people, setPeople] = useState(1);
   const [color, setColor] = useState("black");
+  const [pageLoading, setPageLoading] = useState(true);
 
   const lastPosXRef = useRef<number>();
   const lastPosYRef = useRef<number>();
@@ -91,11 +90,97 @@ export default function Canvas() {
     });
   };
 
+  const generateElementString: (element: any) => string = (element) => {
+    // element is a fabric.Object
+    let objectProperties: any;
+
+    switch (modeRef.current as Mode) {
+      case "pencil":
+        objectProperties = {
+          type: "path",
+          path: element.path,
+          left: element.left,
+          top: element.top,
+          stroke: element.stroke,
+          strokeWidth: 3,
+        };
+        break;
+
+      case "square":
+        objectProperties = {
+          type: "rect",
+          left: element.left,
+          top: element.top,
+          width: element.width,
+          height: element.height,
+          stroke: element.stroke,
+          strokeWidth: 3,
+        };
+        break;
+
+      case "circle":
+        objectProperties = {
+          type: "circle",
+          left: element.left,
+          top: element.top,
+          radius: element.radius,
+          stroke: element.stroke,
+          strokeWidth: 3,
+        };
+
+        break;
+
+      case "text":
+        objectProperties = {
+          type: "text",
+          left: element.left,
+          top: element.top,
+          text: element.text,
+          fill: element.fill,
+          fontWeight: 800,
+          fontSize: 28,
+        };
+        break;
+
+      case "triangle":
+        objectProperties = {
+          type: "triangle",
+          left: element.left,
+          top: element.top,
+          width: element.width,
+          height: element.height,
+          stroke: element.stroke,
+          strokeWidth: 3,
+        };
+        break;
+
+      default:
+        break;
+    }
+
+    return JSON.stringify(objectProperties);
+  };
+
   const mouseDown = (e: fabric.IEvent<MouseEvent>) => {
     if (!fabricRef.current) return;
 
+    isDraggingRef.current = true;
+
+    if (e.e.altKey) {
+      initialMouseCoordsRef.current = e.absolutePointer;
+      fabricRef.current.selection = false;
+
+      lastPosXRef.current = e.e.clientX;
+      lastPosYRef.current = e.e.clientY;
+
+      return;
+    } else {
+      fabricRef.current.selection = true;
+    }
+
     if (modeRef.current === "text") {
       const textObj = new fabric.Text("Text", {
+        fontFamily: "arial",
         fontWeight: 800,
         fontSize: 28,
         left: e.absolutePointer?.x,
@@ -111,20 +196,6 @@ export default function Canvas() {
       selectedTextEl.current = textObj;
 
       return;
-    }
-
-    isDraggingRef.current = true;
-
-    if (e.e.altKey) {
-      initialMouseCoordsRef.current = e.absolutePointer;
-      fabricRef.current.selection = false;
-
-      lastPosXRef.current = e.e.clientX;
-      lastPosYRef.current = e.e.clientY;
-
-      return;
-    } else {
-      fabricRef.current.selection = true;
     }
 
     if (modeRef.current !== "pencil" && modeRef.current !== "selection") {
@@ -179,9 +250,7 @@ export default function Canvas() {
   const mouseMove = (e: fabric.IEvent<MouseEvent>) => {
     if (!initialMouseCoordsRef.current || !e.absolutePointer) return;
 
-    if (modeRef.current === "text") return;
-
-    if (e.e.altKey && initialMouseCoordsRef.current) {
+    if (e.e.altKey && initialMouseCoordsRef.current && isDraggingRef.current) {
       const vpt = fabricRef.current?.viewportTransform as number[];
 
       vpt[4] += e.e.clientX - (lastPosXRef.current as number);
@@ -193,10 +262,9 @@ export default function Canvas() {
       fabricRef.current?.requestRenderAll();
     }
 
-    if (
-      initialMouseCoordsRef.current.x > e.absolutePointer.x ||
-      initialMouseCoordsRef.current.y > e.absolutePointer.y
-    ) {
+    if (modeRef.current === "text") return;
+
+    if (initialMouseCoordsRef.current.x > e.absolutePointer.x || initialMouseCoordsRef.current.y > e.absolutePointer.y) {
       return;
     }
 
@@ -208,7 +276,7 @@ export default function Canvas() {
         top: initialMouseCoordsRef.current?.y,
         radius: (initialMouseCoordsRef.current?.distanceFrom(e.absolutePointer as fabric.Point) || 0) / 2.25,
         fill: "",
-        stroke: "black",
+        stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
         absolutePositioned: true,
       });
@@ -225,7 +293,7 @@ export default function Canvas() {
         width: e.absolutePointer.x - initialMouseCoordsRef.current.x,
         height: e.absolutePointer.y - initialMouseCoordsRef.current.y,
         fill: "",
-        stroke: "black",
+        stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
         absolutePositioned: true,
       });
@@ -242,7 +310,7 @@ export default function Canvas() {
         width: e.absolutePointer.x - initialMouseCoordsRef.current.x,
         height: e.absolutePointer.y - initialMouseCoordsRef.current.y,
         fill: "",
-        stroke: "black",
+        stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
         absolutePositioned: true,
       });
@@ -255,8 +323,6 @@ export default function Canvas() {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    if (modeRef.current === "text") return;
-
     isDraggingRef.current = false;
     canvas.selection = true;
 
@@ -267,6 +333,8 @@ export default function Canvas() {
     canvas.forEachObject((obj) => {
       obj.setCoords();
     });
+
+    if (modeRef.current === "text") return;
 
     const recentDrawn = canvas._objects.at(-1) as any;
     if (recentDrawn && modeRef.current !== "selection" && !e.e.altKey) {
@@ -308,24 +376,24 @@ export default function Canvas() {
   };
 
   const objectModified = () => {
+    console.log("OBJECT MODIFIED");
+
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    // canvas.setActiveObject(canvas.getActiveObjects()[0]);
-
-    const modifiedElems = (canvas._activeObject as any)._objects || canvas.getActiveObjects();
+    const modifiedElems = canvas.getActiveObjects();
 
     // console.log("OBJECT MODIFIED", modifiedElems);
+    const isGroup = "_objects" in canvas._activeObject;
     const group = canvas._activeObject;
     const centerX = (group.left as number) + (group.width as number) / 2;
     const centerY = (group.top as number) + (group.height as number) / 2;
 
+    const timestamp = Date.now();
     const batchedActions = modifiedElems.map((modifiedElem: any) => {
       // if (!modifiedElem || "_objects" in modifiedElem) return;
-      const isGroup = "_objects" in canvas._activeObject;
 
       const modifiedElemIndex = canvas._objects.indexOf(modifiedElem);
-      console.log(modifiedElemIndex, isGroup);
       let modifiedElemType: Mode;
 
       switch (modifiedElem.type) {
@@ -345,6 +413,10 @@ export default function Canvas() {
           modifiedElemType = "text";
           break;
 
+        case "triangle":
+          modifiedElemType = "triangle";
+          break;
+
         default:
           modifiedElemType = "selection";
       }
@@ -359,8 +431,20 @@ export default function Canvas() {
           left: isGroup ? modifiedElem.left + centerX : modifiedElem.left,
           top: isGroup ? modifiedElem.top + centerY : modifiedElem.top,
         }),
-        timestamp: Date.now(),
+        timestamp,
       };
+
+      // const data = {
+      //   type: modifiedElemType,
+      //   action: CanvasActions.OBJECT_MODIFIED,
+      //   initiator: socket.id,
+      //   index: modifiedElemIndex,
+      //   properties: {
+      //     left: isGroup ? modifiedElem.left + centerX : modifiedElem.left,
+      //     top: isGroup ? modifiedElem.top + centerY : modifiedElem.top,
+      //   },
+      //   timestamp,
+      // };
 
       const dataClone = { ...data, timestamp: null };
       const recentAction = { ...actionsRef.current.at(-1), timestamp: null };
@@ -371,6 +455,7 @@ export default function Canvas() {
       return data;
     });
 
+    console.log(batchedActions);
     socket.emit(SocketActions.CANVAS_ACTION.toString(), batchedActions);
   };
 
@@ -394,6 +479,10 @@ export default function Canvas() {
 
     if (type === "text") {
       canvas.add(new fabric.Text(jsonElement.text, jsonElement));
+    }
+
+    if (type === "triangle") {
+      canvas.add(new fabric.Triangle(jsonElement));
     }
   };
 
@@ -421,6 +510,8 @@ export default function Canvas() {
       drawableObject = new fabric.Rect(jsonElement);
     } else if (type === "text") {
       drawableObject = new fabric.Text(jsonElement.text, jsonElement);
+    } else if (type === "triangle") {
+      drawableObject = new fabric.Triangle(jsonElement);
     } else {
       // "circle"
       drawableObject = new fabric.Circle(jsonElement);
@@ -436,17 +527,10 @@ export default function Canvas() {
     });
   };
 
-  const loadAndApplyCanvasActions = (canvasActionData: CanvasActionData) => {
+  const rebuildCanvas = () => {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    const { action, type, element, indexes, index, initiator } = canvasActionData;
-    if (initiator === socket.id) return;
-
-    if (action === CanvasActions.UNDO_ACTION) actionsRef.current.pop();
-    else actionsRef.current.push(canvasActionData);
-
-    // RECONSTRUCT to avoid edge cases
     canvas.clear();
     actionsRef.current
       .sort((a, b) => a.timestamp - b.timestamp)
@@ -460,13 +544,33 @@ export default function Canvas() {
         }
 
         if (actionData.action === CanvasActions.OBJECT_MODIFIED) {
-          modifyRemoteObject(
-            actionData.type as Mode,
-            actionData.element as string,
-            actionData.index as number
-          );
+          modifyRemoteObject(actionData.type as Mode, actionData.element as string, actionData.index as number);
+        }
+
+        if (actionData.action === CanvasActions.SEND_OBJECT_FORWARD) {
+          (actionData.indexes as any[]).forEach((i) => canvas.bringForward(canvas._objects[i]));
+        }
+
+        if (actionData.action === CanvasActions.SEND_OBJECT_BACKWARD) {
+          (actionData.indexes as any[]).forEach((i) => canvas.sendBackwards(canvas._objects[i]));
         }
       });
+  };
+
+  const loadAndApplyCanvasActions = (canvasActionData: CanvasActionData) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    console.log(canvasActionData);
+
+    const { action, type, element, timestamp, initiator } = canvasActionData;
+    if (initiator === socket.id) return;
+
+    if (action === CanvasActions.UNDO_ACTION) actionsRef.current = actionsRef.current.filter((action) => action.timestamp !== timestamp);
+    else actionsRef.current.push(canvasActionData);
+
+    // RECONSTRUCT to avoid edge cases
+    rebuildCanvas();
 
     console.log("REMOTE ACTION:", action, type, element);
     console.log("FROM:", initiator);
@@ -493,13 +597,47 @@ export default function Canvas() {
       fabricCanvas.on("object:modified", () => objectModified());
 
       fabricCanvas.on("selection:created", () => {
-        if (!("_objects" in fabricCanvas._activeObject)) return;
+        selectedObjectsRef.current = fabricCanvas.getActiveObjects();
 
-        // fabricCanvas._activeObject.set("lockMovementX", true);
-        // fabricCanvas._activeObject.set("lockMovementY", true);
-        fabricCanvas._activeObject.set("lockRotation", true);
-        fabricCanvas._activeObject.set("lockScalingX", true);
-        fabricCanvas._activeObject.set("lockScalingY", true);
+        if ("_objects" in fabricCanvas._activeObject) {
+          // fabricCanvas._activeObject.set("lockMovementX", true);
+          // fabricCanvas._activeObject.set("lockMovementY", true);
+          fabricCanvas._activeObject.set("lockRotation", true);
+          fabricCanvas._activeObject.set("lockScalingX", true);
+          fabricCanvas._activeObject.set("lockScalingY", true);
+        }
+
+        const selectedObjects: any[] = fabricCanvas.getActiveObjects();
+        if (selectedObjects.length === 1 && selectedObjects[0].type === "text") {
+          fabricCanvas.setActiveObject(selectedObjects[0]);
+
+          setTextField((selectedObjects[0] as any).text as string);
+          selectedTextEl.current = selectedObjects[0] as any;
+        }
+
+        // selectedObjects.forEach((obj) => {
+        //   obj.strokeCopy = obj.stroke;
+        //   obj.setOptions({ stroke: "#6bbbd6" });
+        // });
+
+        // fabricCanvas.requestRenderAll();
+      });
+
+      fabricCanvas.on("selection:cleared", () => {
+        if (selectedObjectsRef.current.length === 1 && selectedObjectsRef.current[0].type === "text") {
+          setTextField(null);
+          selectedTextEl.current = undefined;
+          acceptKeystrokes.current = true;
+        }
+
+        // (selectedObjectsRef.current as any[]).forEach((obj) => {
+        //   obj.setOptions({ stroke: obj.strokeCopy });
+        //   delete obj.strokeCopy;
+        // });
+
+        // fabricCanvas.requestRenderAll();
+
+        selectedObjectsRef.current = [];
       });
 
       // fabricCanvas.on("object:removed", (e) => !isDraggingRef.current && objectRemoved(e));
@@ -531,9 +669,22 @@ export default function Canvas() {
         if (modeRef.current === "pencil") canvas.isDrawingMode = false;
       }
 
-      // shift-u for undo
-      if (keyE.key.toLowerCase() === "z" && ctrlKeyRef.current) {
-      }
+      // if (keyE.key.toLowerCase() === "z" && (keyE.metaKey || keyE.ctrlKey)) {
+      //   if (actionsRef.current.length === 0) return;
+
+      //   const data = {
+      //     action: CanvasActions.UNDO_ACTION,
+      //     initiator: socket.id,
+      //     timestamp: actionsRef.current.at(-1)?.timestamp,
+      //   };
+
+      //   socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
+      //   console.log(actionsRef.current);
+      //   actionsRef.current = actionsRef.current.filter(
+      //     (action) => action.timestamp !== actionsRef.current.at(-1)?.timestamp
+      //   );
+      //   rebuildCanvas();
+      // }
 
       if (keyE.key.toLowerCase() === "s") {
         setMode("selection");
@@ -541,6 +692,48 @@ export default function Canvas() {
 
       if (keyE.key.toLowerCase() === "p") {
         setMode("pencil");
+      }
+
+      if (keyE.key.toLowerCase() === "t") {
+        setMode("text");
+      }
+
+      if (keyE.key === "]") {
+        const activeObjects = canvas.getActiveObjects();
+
+        const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => b - a);
+        console.log(indexes);
+        indexes.forEach((i) => canvas.bringForward(canvas._objects[i]));
+
+        socket.emit(SocketActions.CANVAS_ACTION.toString(), [
+          {
+            action: CanvasActions.SEND_OBJECT_FORWARD,
+            initiator: socket.id,
+            indexes,
+            timestamp: Date.now(),
+          } as CanvasActionData,
+        ]);
+
+        canvas.requestRenderAll();
+      }
+
+      if (keyE.key === "[") {
+        const activeObjects = canvas.getActiveObjects();
+
+        const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => a - b);
+        console.log(indexes);
+        indexes.forEach((i) => canvas.sendBackwards(canvas._objects[i]));
+
+        socket.emit(SocketActions.CANVAS_ACTION.toString(), [
+          {
+            action: CanvasActions.SEND_OBJECT_BACKWARD,
+            initiator: socket.id,
+            indexes,
+            timestamp: Date.now(),
+          } as CanvasActionData,
+        ]);
+
+        canvas.requestRenderAll();
       }
     };
 
@@ -563,32 +756,22 @@ export default function Canvas() {
       window.history.pushState("", "", "/" + roomId);
     }
 
-    socket.emit(SocketActions.JOIN_ROOM.toString(), { roomId });
+    socket.io.on("open", () => {
+      socket.emit(SocketActions.JOIN_ROOM.toString(), { roomId });
+      setPageLoading(false);
+    });
 
-    socket.on(SocketActions.LOAD_CANVAS.toString(), (serializedCanvasData: any) => {
-      const canvasActions = JSON.parse(serializedCanvasData);
-
-      actionsRef.current = canvasActions.slice(0, canvasActions.length - 1);
-      loadAndApplyCanvasActions(canvasActions.at(-1));
+    socket.on(SocketActions.LOAD_CANVAS.toString(), (canvasActions: any) => {
+      actionsRef.current = canvasActions ? canvasActions.slice(0, canvasActions.length - 1) : [];
+      if (canvasActions.at(-1)) loadAndApplyCanvasActions(canvasActions.at(-1));
     });
 
     socket.on(SocketActions.UPDATE_PEOPLE_COUNT.toString(), (count: number) => setPeople(count));
 
     // STORE HOSTORY OF ALL ACTIONS sorted with TIMESTAMP & rebuild them on every update
     socket.on(SocketActions.CANVAS_ACTION.toString(), (canvasActionsData: CanvasActionData[]) => {
-      canvasActionsData.forEach((canvasActionData) => loadAndApplyCanvasActions(canvasActionData));
-
-      // if (action === CanvasActions.OBJECT_ADDED) {
-      //   addRemoteObject(type as Mode, element as string);
-      // }
-
-      // if (action === CanvasActions.OBJECTS_REMOVED) {
-      //   removeRemoteObject(indexes as number[]);
-      // }
-
-      // if (action === CanvasActions.OBJECT_MODIFIED) {
-      //   modifyRemoteObject(type as Mode, element as string, index as number);
-      // }
+      console.log("ACTION DATA", canvasActionsData);
+      canvasActionsData.forEach(loadAndApplyCanvasActions);
     });
   }, []);
 
@@ -615,11 +798,6 @@ export default function Canvas() {
     }
   }, [mode]);
 
-  useEffect(() => {
-    if (selectedTextEl.current && textField) selectedTextEl.current.text = textField;
-    fabricRef.current?.renderAll();
-  }, [textField]);
-
   const changeColor = (color: string) => {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -632,8 +810,10 @@ export default function Canvas() {
       else obj.setOptions({ stroke: color });
     });
 
-    canvas.requestRenderAll();
-    objectModified();
+    if (selectedObjects.length > 0) {
+      canvas.requestRenderAll();
+      objectModified();
+    }
   };
 
   return (
@@ -642,14 +822,35 @@ export default function Canvas() {
 
       {textField !== null && (
         <div className="fixed top-10 bg-white">
-          <textarea
-            onChange={(e) => {
-              setTextField(e.target.value);
-            }}
-            className="text-xl px-5 py-2 w-96 border shadow-xl rounded focus:outline-none"
-            value={textField}
-            onFocusCapture={() => (acceptKeystrokes.current = false)}
-          />
+          <form>
+            <textarea
+              onChange={(e) => {
+                setTextField(e.target.value);
+
+                if (selectedTextEl.current && e.target.value) {
+                  (selectedTextEl.current as fabric.Text).text = e.target.value;
+
+                  console.log(textTypeTimeoutRef.current);
+                  clearTimeout(textTypeTimeoutRef.current);
+                  textTypeTimeoutRef.current = setTimeout(() => {
+                    console.log("timeout modified");
+                    objectModified();
+                  }, 500);
+
+                  fabricRef.current?.renderAll();
+                }
+              }}
+              className="text-xl px-5 py-2 w-96 border shadow-xl rounded focus:outline-none"
+              value={textField}
+              onFocusCapture={() => (acceptKeystrokes.current = false)}
+            />
+          </form>
+        </div>
+      )}
+
+      {pageLoading && (
+        <div className="z-50 fixed w-full h-full flex justify-center items-center cursor-not-allowed">
+          <img className="w-64" src="/loading.gif" />
         </div>
       )}
 
@@ -661,15 +862,15 @@ export default function Canvas() {
       <div className="flex items-center justify-between fixed bottom-10 px-7 py-2 border text-4xl shadow-xl rounded-2xl bg-white">
         <div
           className="p-5 rounded-full hover:scale-110 hover:shadow-lg cursor-pointer duration-100"
-          onClick={() => setMode("selection")}
+          onClick={() => {
+            console.log(actionsRef.current);
+            setMode("selection");
+          }}
         >
           <FaMousePointer className={`${mode === "selection" ? "text-purple-500" : "text-gray-500"}`} />
         </div>
 
-        <div
-          className="p-5 rounded-full hover:scale-110 hover:shadow-lg cursor-pointer duration-100"
-          onClick={() => setMode("pencil")}
-        >
+        <div className="p-5 rounded-full hover:scale-110 hover:shadow-lg cursor-pointer duration-100" onClick={() => setMode("pencil")}>
           <ImPencil2 className={`${mode === "pencil" ? "text-purple-500" : "text-gray-500"}`} />
         </div>
 
@@ -720,11 +921,7 @@ export default function Canvas() {
             onClick={() => setShowShapes(!showShapes)}
             className="-ml-1 mr-5 p-5 rounded-full hover:scale-110 hover:shadow-lg cursor-pointer duration-100"
           >
-            <IoShapesOutline
-              className={`${
-                ["square", "circle", "triangle"].includes(mode) ? "text-purple-500" : "text-gray-500"
-              }`}
-            />
+            <IoShapesOutline className={`${["square", "circle", "triangle"].includes(mode) ? "text-purple-500" : "text-gray-500"}`} />
           </div>
         </div>
 
