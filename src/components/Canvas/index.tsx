@@ -3,7 +3,7 @@ import { fabric } from "fabric";
 import { ImPencil2 } from "react-icons/im";
 import { BiText } from "react-icons/bi";
 import { FaMousePointer } from "react-icons/fa";
-import { IoEye } from "react-icons/io5";
+import { IoEye, IoEyedrop, IoEyeOff } from "react-icons/io5";
 import { IoTriangle, IoSquare, IoEllipse, IoShapesOutline } from "react-icons/io5";
 import { CanvasActionData, IElement, Mode } from "../../types";
 import { io } from "socket.io-client";
@@ -13,13 +13,15 @@ import { generateHash } from "./utils";
 
 // TODO:
 // UPDATES
-// DRAW SHAPES no restrictions
-// MECHANISM to compare length of actions on all users & resolve it
+// AVOID making shapes on mouse down
+
+// NO, I DONT THINK I WILL (meme)
 
 const socket = io(import.meta.env.VITE_SOCKET_SERVER);
-socket.connect();
 
 export default function Canvas() {
+  const roomId = window.location.pathname.slice(1);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
 
@@ -31,15 +33,16 @@ export default function Canvas() {
   const actionsRef = useRef<CanvasActionData[]>([]);
   const textTypeTimeoutRef = useRef<number | undefined>();
   const selectedObjectsRef = useRef<fabric.Object[]>([]);
-
   const isDraggingRef = useRef(false);
+  const isPrivateRef = useRef(!roomId);
 
   const [textField, setTextField] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("selection");
   const [showShapes, setShowShapes] = useState(false);
-  const [people, setPeople] = useState(1);
+  const [people, setPeople] = useState(0);
   const [color, setColor] = useState("black");
-  const [pageLoading, setPageLoading] = useState(true);
+  const [loadingState, setLoadingState] = useState<"server" | "canvas" | null>(roomId ? "server" : null);
+  const [isPrivate, setIsPrivate] = useState(!roomId);
 
   const lastPosXRef = useRef<number>();
   const lastPosYRef = useRef<number>();
@@ -185,6 +188,7 @@ export default function Canvas() {
         fontSize: 28,
         left: e.absolutePointer?.x,
         top: e.absolutePointer?.y,
+        includeDefaultValues: false,
       });
 
       fabricRef.current.add(textObj);
@@ -278,7 +282,6 @@ export default function Canvas() {
         fill: "",
         stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
-        absolutePositioned: true,
       });
 
       fabricRef.current?.add(currentElRef.current);
@@ -295,7 +298,6 @@ export default function Canvas() {
         fill: "",
         stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
-        absolutePositioned: true,
       });
 
       fabricRef.current?.add(currentElRef.current);
@@ -312,7 +314,6 @@ export default function Canvas() {
         fill: "",
         stroke: fabricRef.current?.freeDrawingBrush.color || "black",
         strokeWidth: 3,
-        absolutePositioned: true,
       });
 
       fabricRef.current?.add(currentElRef.current);
@@ -332,12 +333,15 @@ export default function Canvas() {
 
     canvas.forEachObject((obj) => {
       obj.setCoords();
+      obj.setOptions({ includeDefaultValues: false });
     });
 
     if (modeRef.current === "text") return;
 
     const recentDrawn = canvas._objects.at(-1) as any;
-    if (recentDrawn && modeRef.current !== "selection" && !e.e.altKey) {
+    if (recentDrawn?.type !== "path" && (recentDrawn.width === 0 || recentDrawn.height === 0 || recentDrawn.radius === 0)) {
+      canvas.remove(recentDrawn);
+    } else if (recentDrawn && modeRef.current !== "selection" && !e.e.altKey) {
       objectAdded(recentDrawn);
     }
 
@@ -367,11 +371,12 @@ export default function Canvas() {
       action: CanvasActions.OBJECT_ADDED,
       initiator: socket.id,
       type: modeRef.current,
-      element: JSON.stringify(element),
+      element: JSON.stringify(element.toJSON()),
       timestamp: Date.now(),
     };
 
-    socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
+    console.log("isPrivate", isPrivateRef.current);
+    if (!isPrivateRef.current) socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
     actionsRef.current.push(data);
   };
 
@@ -392,6 +397,7 @@ export default function Canvas() {
     const timestamp = Date.now();
     const batchedActions = modifiedElems.map((modifiedElem: any) => {
       // if (!modifiedElem || "_objects" in modifiedElem) return;
+      modifiedElem.includeDefaultValues = false;
 
       const modifiedElemIndex = canvas._objects.indexOf(modifiedElem);
       let modifiedElemType: Mode;
@@ -456,7 +462,7 @@ export default function Canvas() {
     });
 
     console.log(batchedActions);
-    socket.emit(SocketActions.CANVAS_ACTION.toString(), batchedActions);
+    if (!isPrivateRef.current) socket.emit(SocketActions.CANVAS_ACTION.toString(), batchedActions);
   };
 
   const addRemoteObject = (type: Mode, element: string) => {
@@ -547,33 +553,61 @@ export default function Canvas() {
           modifyRemoteObject(actionData.type as Mode, actionData.element as string, actionData.index as number);
         }
 
-        if (actionData.action === CanvasActions.SEND_OBJECT_FORWARD) {
-          (actionData.indexes as any[]).forEach((i) => canvas.bringForward(canvas._objects[i]));
-        }
+        // if (actionData.action === CanvasActions.SEND_OBJECT_FORWARD) {
+        //   (actionData.indexes as number[]).forEach((i) => canvas.bringToFront(canvas._objects[i]));
+        // }
 
-        if (actionData.action === CanvasActions.SEND_OBJECT_BACKWARD) {
-          (actionData.indexes as any[]).forEach((i) => canvas.sendBackwards(canvas._objects[i]));
-        }
+        // // If NOTHING is causing this fuckery, go FUCK ALL & check with HASHES
+        // if (actionData.action === CanvasActions.SEND_OBJECT_BACKWARD) {
+        //   (actionData.indexes as number[]).forEach((i) => canvas.sendToBack(canvas._objects[i]));
+        // }
       });
+
+    canvas.renderAll();
   };
 
-  const loadAndApplyCanvasActions = (canvasActionData: CanvasActionData) => {
+  const loadAndApplyCanvasActions = (canvasActionsData: CanvasActionData[]) => {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    console.log(canvasActionData);
+    console.log("RECIEVED REMOTE ACTIONS:", canvasActionsData);
 
-    const { action, type, element, timestamp, initiator } = canvasActionData;
-    if (initiator === socket.id) return;
+    canvasActionsData.forEach((canvasActionData) => {
+      const { action, timestamp, initiator } = canvasActionData;
+      console.log("init", initiator, socket.id);
+      if (initiator === socket.id) return;
 
-    if (action === CanvasActions.UNDO_ACTION) actionsRef.current = actionsRef.current.filter((action) => action.timestamp !== timestamp);
-    else actionsRef.current.push(canvasActionData);
+      if (action === CanvasActions.UNDO_ACTION) actionsRef.current = actionsRef.current.filter((action) => action.timestamp !== timestamp);
+      else actionsRef.current.push(canvasActionData);
+
+      console.log("ACTIONS", actionsRef.current.length, actionsRef.current);
+    });
 
     // RECONSTRUCT to avoid edge cases
-    rebuildCanvas();
+    if (canvasActionsData.every((action) => action.initiator !== socket.id)) {
+      console.log("REBUILDING CANVAS for remote changes");
+      rebuildCanvas();
+    }
+  };
 
-    console.log("REMOTE ACTION:", action, type, element);
-    console.log("FROM:", initiator);
+  const goPublic = () => {
+    socket.connect();
+
+    setIsPrivate(false);
+    setLoadingState("canvas");
+
+    const id = roomId || uuidv4();
+    window.history.pushState("", "", "/" + id);
+    socket.emit(SocketActions.JOIN_ROOM.toString(), { roomId: id });
+    console.log("JOINING ROOM");
+  };
+
+  const goPrivate = () => {
+    socket.disconnect();
+
+    setIsPrivate(true);
+
+    window.history.pushState("", "", "/");
   };
 
   useEffect(() => {
@@ -659,7 +693,7 @@ export default function Canvas() {
           timestamp: Date.now(),
         };
 
-        socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
+        if (!isPrivateRef.current) socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
         actionsRef.current.push(data);
         selectedObjects.forEach((obj) => canvas.remove(obj));
       }
@@ -678,7 +712,7 @@ export default function Canvas() {
       //     timestamp: actionsRef.current.at(-1)?.timestamp,
       //   };
 
-      //   socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
+      //   if (!isPrivateRef.current) socket.emit(SocketActions.CANVAS_ACTION.toString(), [data]);
       //   console.log(actionsRef.current);
       //   actionsRef.current = actionsRef.current.filter(
       //     (action) => action.timestamp !== actionsRef.current.at(-1)?.timestamp
@@ -698,43 +732,45 @@ export default function Canvas() {
         setMode("text");
       }
 
-      if (keyE.key === "]") {
-        const activeObjects = canvas.getActiveObjects();
+      // if (keyE.key === "]") {
+      //   const activeObjects = canvas.getActiveObjects();
 
-        const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => b - a);
-        console.log(indexes);
-        indexes.forEach((i) => canvas.bringForward(canvas._objects[i]));
+      //   const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => a - b);
 
-        socket.emit(SocketActions.CANVAS_ACTION.toString(), [
-          {
-            action: CanvasActions.SEND_OBJECT_FORWARD,
-            initiator: socket.id,
-            indexes,
-            timestamp: Date.now(),
-          } as CanvasActionData,
-        ]);
+      //   if (!isPrivateRef.current)
+      //     socket.emit(SocketActions.CANVAS_ACTION.toString(), [
+      //       {
+      //         action: CanvasActions.SEND_OBJECT_FORWARD,
+      //         initiator: socket.id,
+      //         indexes,
+      //         timestamp: Date.now(),
+      //       } as CanvasActionData,
+      //     ]);
 
-        canvas.requestRenderAll();
-      }
+      //   activeObjects.forEach((obj) => canvas.bringToFront(obj));
 
-      if (keyE.key === "[") {
-        const activeObjects = canvas.getActiveObjects();
+      //   canvas.requestRenderAll();
+      // }
 
-        const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => a - b);
-        console.log(indexes);
-        indexes.forEach((i) => canvas.sendBackwards(canvas._objects[i]));
+      // if (keyE.key === "[") {
+      //   const activeObjects = canvas.getActiveObjects();
 
-        socket.emit(SocketActions.CANVAS_ACTION.toString(), [
-          {
-            action: CanvasActions.SEND_OBJECT_BACKWARD,
-            initiator: socket.id,
-            indexes,
-            timestamp: Date.now(),
-          } as CanvasActionData,
-        ]);
+      //   const indexes = activeObjects.map((obj) => canvas._objects.indexOf(obj)).sort((a, b) => a - b);
 
-        canvas.requestRenderAll();
-      }
+      //   if (!isPrivateRef.current)
+      //     socket.emit(SocketActions.CANVAS_ACTION.toString(), [
+      //       {
+      //         action: CanvasActions.SEND_OBJECT_BACKWARD,
+      //         initiator: socket.id,
+      //         indexes,
+      //         timestamp: Date.now(),
+      //       } as CanvasActionData,
+      //     ]);
+
+      //   activeObjects.forEach((obj) => canvas.sendToBack(obj));
+
+      //   canvas.requestRenderAll();
+      // }
     };
 
     window.onkeyup = (keyE) => {
@@ -750,28 +786,30 @@ export default function Canvas() {
   }, []);
 
   useEffect(() => {
-    const roomId = window.location.pathname.slice(1) || uuidv4();
-
-    if (!window.location.pathname.slice(1)) {
-      window.history.pushState("", "", "/" + roomId);
-    }
-
-    socket.io.on("open", () => {
-      socket.emit(SocketActions.JOIN_ROOM.toString(), { roomId });
-      setPageLoading(false);
-    });
+    socket.connect();
+    if (roomId) socket.emit(SocketActions.JOIN_ROOM.toString(), { roomId });
 
     socket.on(SocketActions.LOAD_CANVAS.toString(), (canvasActions: any) => {
-      actionsRef.current = canvasActions ? canvasActions.slice(0, canvasActions.length - 1) : [];
-      if (canvasActions.at(-1)) loadAndApplyCanvasActions(canvasActions.at(-1));
+      console.log("CANVAS LOADED with actions:", canvasActions);
+      setLoadingState(null);
+
+      const sortedCanvasActions = canvasActions.sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+      if (canvasActions) {
+        console.log(sortedCanvasActions);
+        loadAndApplyCanvasActions(sortedCanvasActions);
+      } else if (actionsRef.current.length > 0) {
+        actionsRef.current = actionsRef.current.map((action) => ({ ...action, initiator: socket.id }));
+        console.log("UPLOADING ACTIONS", actionsRef.current);
+        socket.emit(SocketActions.CANVAS_ACTION.toString(), actionsRef.current);
+      }
     });
 
     socket.on(SocketActions.UPDATE_PEOPLE_COUNT.toString(), (count: number) => setPeople(count));
 
-    // STORE HOSTORY OF ALL ACTIONS sorted with TIMESTAMP & rebuild them on every update
     socket.on(SocketActions.CANVAS_ACTION.toString(), (canvasActionsData: CanvasActionData[]) => {
       console.log("ACTION DATA", canvasActionsData);
-      canvasActionsData.forEach(loadAndApplyCanvasActions);
+      loadAndApplyCanvasActions(canvasActionsData);
     });
   }, []);
 
@@ -797,6 +835,10 @@ export default function Canvas() {
       fabricCanvas.selection = true;
     }
   }, [mode]);
+
+  useEffect(() => {
+    isPrivateRef.current = isPrivate;
+  }, [isPrivate]);
 
   const changeColor = (color: string) => {
     const canvas = fabricRef.current;
@@ -848,14 +890,29 @@ export default function Canvas() {
         </div>
       )}
 
-      {pageLoading && (
-        <div className="z-50 fixed w-full h-full flex justify-center items-center cursor-not-allowed">
-          <img className="w-64" src="/loading.gif" />
+      {loadingState && (
+        <div
+          className="z-50 fixed w-full h-full flex justify-center items-center cursor-not-allowed"
+          style={{ backgroundColor: loadingState === "server" ? "#000000" : "", opacity: loadingState === "server" ? "90%" : "" }}
+        >
+          {loadingState === "server" && <p className="text-lg text-white">Connecting to server...</p>}
+          {loadingState === "canvas" && <img className="w-64" src="/loading.gif" />}
         </div>
       )}
 
-      <div className="flex items-center rounded p-1.5 bg-gray-100 fixed top-5 right-5">
-        <IoEye className="mr-1 text-lg text-gray-600" />
+      <div className="flex items-center rounded px-3 py-1.5 bg-gray-100 fixed top-5 right-5">
+        <div
+          className="hover:bg-gray-200 transition-all duration:300 cursor-pointer rounded-full p-1 text-2xl text-gray-600"
+          onClick={() => {
+            if (isPrivate) {
+              goPublic();
+            } else if (people === 1) {
+              goPrivate();
+            }
+          }}
+        >
+          {isPrivate ? <IoEyeOff className="text-red-500" /> : <IoEye className="text-green-500" />}
+        </div>
         <p className="text-sm text-gray-600">{people}</p>
       </div>
 
@@ -863,7 +920,6 @@ export default function Canvas() {
         <div
           className="p-5 rounded-full hover:scale-110 hover:shadow-lg cursor-pointer duration-100"
           onClick={() => {
-            console.log(actionsRef.current);
             setMode("selection");
           }}
         >
