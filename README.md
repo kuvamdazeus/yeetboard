@@ -2,15 +2,15 @@
 
 I've attempted to give users freedom to draw, shapes or free-hand. With customizability of the elements they create on empty canvas while being able to collaborate with friends with just ONE-CLICK!
 
-# Overview video (Optional)
+# Overview video
 
 Here's a short demo video that shows how the App works & also what are features available on this app
 
-![youtube video https://www.youtube.com/watch?v=RPY1qSU9tjw showing features of the application](https://www.youtube.com/watch?v=RPY1qSU9tjw)
+[![Embedded video](https://i.ytimg.com/vi/RPY1qSU9tjw/maxresdefault.jpg)](https://www.youtube.com/watch?v=RPY1qSU9tjw)
 
 ## How it works
 
-To give an overview, the app uses WebSockets with a separate NestJS server () to communicate any "ACTION"s that user takes & that "ACTION" is emitted to all of the users who are connected to the same room (Rooms API of Socket.IO is utilised for managing rooms).
+To give an overview, the app uses WebSockets with a separate NestJS server to communicate any "ACTION"s that user takes & that "ACTION" is emitted to all of the users who are connected to the same room (Rooms API of Socket.IO is utilised for managing rooms).
 
 > What's an ACTION?<br>
 > ACTION is a JSON object stored locally (in-memory) & emitted to all roommates. This JSON object contains things like the type of action ("OBJECT_ADDED" or "OBJECT_MODIFIED" etc.) and other necessary data enough for the other user to generate the object by itself on their end.
@@ -26,8 +26,7 @@ BASICALLY, the RedisJSON database here acts as a session storage for the ongoing
 CONS of this action-based approach:
 
 - storage hungry
-
-As the size of the document keeps on increasing with every action taken by the user/
+- sometimes be slow for boards containing a big history of actions
 
 ## How to run it locally?
 
@@ -35,7 +34,7 @@ As the size of the document keeps on increasing with every action taken by the u
 - Do `pnpm i`
 - Run on dev mode with `pnpm dev`
 
-This will run the React App, to run the Websocket server:
+The above instructions will run the React App, to run the Websocket server follow the instructions written below:
 
 - Clone the repo: https://github.com/kuvamdazeus/yeetboard-nestjs
 - Install dependencies with `yarn`
