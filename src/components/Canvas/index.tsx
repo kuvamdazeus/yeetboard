@@ -12,10 +12,8 @@ import { CanvasActions, SocketActions } from "../../events";
 import { generateHash } from "./utils";
 
 // TODO:
-// UPDATES
-// AVOID making shapes on mouse down
-
-// NO, I DONT THINK I WILL (meme)
+// EMIT updates on regular intervals
+// AVOID making unwanted shapes on mouse down
 
 const socket = io(import.meta.env.VITE_SOCKET_SERVER);
 
