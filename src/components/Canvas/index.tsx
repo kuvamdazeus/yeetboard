@@ -792,7 +792,7 @@ export default function Canvas() {
       setLoadingState(null);
 
       if (canvasActions) {
-        const sortedCanvasActions = canvasActions.sort((a: any, b: any) => a.timestamp - b.timestamp);
+        const sortedCanvasActions = canvasActions.filter((action: any) => !!action).sort((a: any, b: any) => a.timestamp - b.timestamp);
         console.log(sortedCanvasActions);
         loadAndApplyCanvasActions(sortedCanvasActions);
       } else if (actionsRef.current.length > 0) {
