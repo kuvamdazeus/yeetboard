@@ -791,9 +791,8 @@ export default function Canvas() {
       console.log("CANVAS LOADED with actions:", canvasActions);
       setLoadingState(null);
 
-      const sortedCanvasActions = canvasActions.sort((a: any, b: any) => a.timestamp - b.timestamp);
-
       if (canvasActions) {
+        const sortedCanvasActions = canvasActions.sort((a: any, b: any) => a.timestamp - b.timestamp);
         console.log(sortedCanvasActions);
         loadAndApplyCanvasActions(sortedCanvasActions);
       } else if (actionsRef.current.length > 0) {
