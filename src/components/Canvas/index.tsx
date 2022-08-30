@@ -337,7 +337,7 @@ export default function Canvas() {
     if (modeRef.current === "text") return;
 
     const recentDrawn = canvas._objects.at(-1) as any;
-    if (recentDrawn?.type !== "path" && (recentDrawn.width === 0 || recentDrawn.height === 0 || recentDrawn.radius === 0)) {
+    if (recentDrawn && recentDrawn?.type !== "path" && (recentDrawn?.width === 0 || recentDrawn?.height === 0 || recentDrawn?.radius === 0)) {
       canvas.remove(recentDrawn);
     } else if (recentDrawn && modeRef.current !== "selection" && !e.e.altKey) {
       objectAdded(recentDrawn);
